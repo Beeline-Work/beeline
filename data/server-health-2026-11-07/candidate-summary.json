@@ -1,0 +1,4181 @@
+{
+  "sourceSha": "00b345c83b2ad74cb0eacd496c02a3e2d66a4984",
+  "status": "candidate inventory complete; semantic census incomplete",
+  "files": 832,
+  "candidates": 5535,
+  "counts": {
+    "value-specific-branch": 3333,
+    "non-propagating-handler": 373,
+    "value-specific-set": 38,
+    "retry-sleep-or-scheduling-candidate": 23,
+    "disabled-or-conditional-test": 95,
+    "sql-conditional-policy": 1497,
+    "caller-parameter-candidate": 176
+  },
+  "dispositions": {
+    "retain-until-semantic-review": 5533,
+    "avoidable-compatibility-slot": 2
+  },
+  "manifest": [
+    {
+      "file": "apps/server/scripts/ci-shards.mjs",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/scripts/coverage-map-artifact.mjs",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/scripts/coverage-map-setup.mjs",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/scripts/generate-email-art.mjs",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/scripts/run-ci-shard.mjs",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/scripts/run-integration-shard.mjs",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/scripts/selected-tests.mjs",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/scripts/shared-browser-repro.ts",
+      "test": false,
+      "sites": 25
+    },
+    {
+      "file": "apps/server/scripts/test-database-setup.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/scripts/test-event-loop.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/scripts/test-selection-replay.mjs",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/scripts/test-selection.mjs",
+      "test": false,
+      "sites": 26
+    },
+    {
+      "file": "apps/server/scripts/verify-fly-cutover.mjs",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/account-deletion.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/advisory-lock-replacements.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-access.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-avatar.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-avatar.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/agent-command-create-agent-command.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/agent-command-queue.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/agent-command-read-agent-commands.ts",
+      "test": false,
+      "sites": 26
+    },
+    {
+      "file": "apps/server/src/agent-command-reconcile-configured-corner-reviewers.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-command-route-agent-result.ts",
+      "test": false,
+      "sites": 17
+    },
+    {
+      "file": "apps/server/src/agent-command.integration-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-command.integration-3.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-command.integration.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-command.ts",
+      "test": false,
+      "sites": 74
+    },
+    {
+      "file": "apps/server/src/agent-grant-inspect.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-health.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-health.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-lifecycle-command.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-member-metadata.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-member-metadata.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-order-resources.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-post-text.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-post-text.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-removal.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-retirement.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/agent-return-queue.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-schedule-deadline.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-schedule-source.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/agent-schedules.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-schedules.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/agent-sign-in.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-sign-in.ts",
+      "test": false,
+      "sites": 17
+    },
+    {
+      "file": "apps/server/src/agent-subscriptions.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-subscriptions.ts",
+      "test": false,
+      "sites": 84
+    },
+    {
+      "file": "apps/server/src/agent-turn-batch.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-turn-end.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-turn-end.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-turn-failure.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-turn-lifecycle.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-turn-native.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/agent-usage-accounts.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-usage.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-usage.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/agent-voice.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/agent-voice.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/agent-wake-pause.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/apns-push.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/apns-push.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/app-api-credential.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/app-connections-connect-app.ts",
+      "test": false,
+      "sites": 38
+    },
+    {
+      "file": "apps/server/src/app-connections.integration-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/app-connections.integration-3.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/app-connections.integration-4.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/app-connections.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/app-connections.ts",
+      "test": false,
+      "sites": 60
+    },
+    {
+      "file": "apps/server/src/approval-card-identity.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/approval-card-source.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/approval-card-source.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/archived-corner-memberships.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/auth.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/auth.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/authorization-lifetime.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/background-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/background-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/background-database-recovery.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/background-due-source.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/background-retirement.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/background-work.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/background-work.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/background.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/background.ts",
+      "test": false,
+      "sites": 25
+    },
+    {
+      "file": "apps/server/src/can-read-rooms.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/cdp-client.ts",
+      "test": false,
+      "sites": 18
+    },
+    {
+      "file": "apps/server/src/cdp-fake.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/channel-mention.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/chat-corner-counts.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/chat-corner-counts.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/choice-expiry-schema.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/client-error-observation.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/command-completion.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/command-completion.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/command-refusal.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/command-scoped-database.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander-opening.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander-order-target.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander-recovery.integration-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander-recovery.integration-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander-recovery.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander-wakes.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander.integration-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander.integration-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/commander.ts",
+      "test": false,
+      "sites": 18
+    },
+    {
+      "file": "apps/server/src/committed-journal-schema.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/compact-room-view.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/compact-room-view.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/company-logos.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/company-logos.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/company-mcp-discovery.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/company-mcp-discovery.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/company-registry.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/composio-apps.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/composio-apps.ts",
+      "test": false,
+      "sites": 91
+    },
+    {
+      "file": "apps/server/src/composio-delivery.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/computer-expiry-schema.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/computer-session-2.test.ts",
+      "test": true,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/computer-session-computer-viewer-html.ts",
+      "test": false,
+      "sites": 19
+    },
+    {
+      "file": "apps/server/src/computer-session.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/computer-session.ts",
+      "test": false,
+      "sites": 61
+    },
+    {
+      "file": "apps/server/src/connected-app-activity.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/connection-presence.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/connection-presence.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/connection-presence.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/connection-wait.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/connector-claims.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/connector-discovery-cache.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/connector-intent-index.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/connector-intent-index.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/connector-offer-completion.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/connector-offer-expiry.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-access-database.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-access-database.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/corner-attention.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-attention.ts",
+      "test": false,
+      "sites": 35
+    },
+    {
+      "file": "apps/server/src/corner-branch-cleanup.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/corner-branch.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-brief-refusals.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-brief-reproduction.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-brief-sentry.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-brief.ts",
+      "test": false,
+      "sites": 20
+    },
+    {
+      "file": "apps/server/src/corner-callsite.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-cleanup-backfill.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-cleanup-cli.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/corner-close.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/corner-follow.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-follow.ts",
+      "test": false,
+      "sites": 14
+    },
+    {
+      "file": "apps/server/src/corner-github-cache.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/corner-helper-close.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-holds.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/corner-idle.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle-4.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle-5.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle-event-replay.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle-read-state.ts",
+      "test": false,
+      "sites": 34
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle-review-state.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle-values.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-lifecycle.ts",
+      "test": false,
+      "sites": 48
+    },
+    {
+      "file": "apps/server/src/corner-machine.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-merge-approval.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/corner-objective.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/corner-open-from-corner.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-open-implementer.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-open-watch.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-opening.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/corner-owed.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-owed.ts",
+      "test": false,
+      "sites": 55
+    },
+    {
+      "file": "apps/server/src/corner-person-state.production.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/corner-person-state.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-person-state.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/corner-refusals.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-review-dispatch-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-review-dispatch.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-reviewer-list.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-reviewer-override.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-reviewer.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-rollback.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-row-projection.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/corner-run.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-state-reference.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-state.exhaustive.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-state.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-state.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/corner-title.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-waiting-reason.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-waiting-report.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/corner-wake-cleanup.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-watch.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/corner-worker.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/daemon-credential-lifetime.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon-inbox-cause.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon-inbox-cause.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon-live.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon-live.ts",
+      "test": false,
+      "sites": 66
+    },
+    {
+      "file": "apps/server/src/daemon-service.access.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon-service.completion-latency.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon-service.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/daemon-storage-lifecycle.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon/access.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/daemon/approvals.ts",
+      "test": false,
+      "sites": 25
+    },
+    {
+      "file": "apps/server/src/daemon/apps.ts",
+      "test": false,
+      "sites": 59
+    },
+    {
+      "file": "apps/server/src/daemon/authority.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/daemon/configuration.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/daemon/connector-offers.ts",
+      "test": false,
+      "sites": 18
+    },
+    {
+      "file": "apps/server/src/daemon/connectors.ts",
+      "test": false,
+      "sites": 22
+    },
+    {
+      "file": "apps/server/src/daemon/context.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon/corner-completion.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/daemon/corner-messages.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/daemon/corner-reads.ts",
+      "test": false,
+      "sites": 14
+    },
+    {
+      "file": "apps/server/src/daemon/corner-reports.ts",
+      "test": false,
+      "sites": 16
+    },
+    {
+      "file": "apps/server/src/daemon/corner-writes.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/daemon/execute.ts",
+      "test": false,
+      "sites": 43
+    },
+    {
+      "file": "apps/server/src/daemon/grants.ts",
+      "test": false,
+      "sites": 28
+    },
+    {
+      "file": "apps/server/src/daemon/inbox-roster.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/daemon/message-reads.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/daemon/messages.ts",
+      "test": false,
+      "sites": 28
+    },
+    {
+      "file": "apps/server/src/daemon/models.ts",
+      "test": false,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/daemon/operation-effects.ts",
+      "test": false,
+      "sites": 51
+    },
+    {
+      "file": "apps/server/src/daemon/operation-names.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/daemon/operations.ts",
+      "test": false,
+      "sites": 176
+    },
+    {
+      "file": "apps/server/src/daemon/owned-model.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/daemon/schedules-events.ts",
+      "test": false,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/daemon/turn-receipts.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/daemon/values.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/daemon/workbench.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/database-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/database-backfill-squire-approval-expiry.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/database-background-work.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/database-background-work.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/database-budget.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/database-migrate.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/database-schema-agent-grants.ts",
+      "test": false,
+      "sites": 113
+    },
+    {
+      "file": "apps/server/src/database-schema-corner-facts.ts",
+      "test": false,
+      "sites": 153
+    },
+    {
+      "file": "apps/server/src/database-schema-institutional-memory-items.ts",
+      "test": false,
+      "sites": 121
+    },
+    {
+      "file": "apps/server/src/database-schema-tables.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/database-schema-workflow-backfills.ts",
+      "test": false,
+      "sites": 137
+    },
+    {
+      "file": "apps/server/src/database-work-queue.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/database.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/database.ts",
+      "test": false,
+      "sites": 19
+    },
+    {
+      "file": "apps/server/src/dm-attachment.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/durable-avatar.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/durable-avatar.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/email-art/animals.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/email-art/logo.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/email-art/palette.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/email-images.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/event-cascade.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/evm-chain.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/evm-chain.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/external-send-status.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/face-palette.generated.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/feedback-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/feedback-dispositions.ts",
+      "test": false,
+      "sites": 14
+    },
+    {
+      "file": "apps/server/src/feedback-github.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/feedback-triage-workflow.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/feedback-triage-workflow.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/feedback-workflow-refusals.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/feedback.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/feedback.ts",
+      "test": false,
+      "sites": 15
+    },
+    {
+      "file": "apps/server/src/firebase-push.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/firebase-push.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/first-party-integrations.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/first-room.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/fixtures/rollout-0707-corner-worker.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/fixtures/sentry-22-load-corners.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/fly-machines.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/fly-machines.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/free-agent-accounting.ts",
+      "test": false,
+      "sites": 17
+    },
+    {
+      "file": "apps/server/src/free-agent-creation.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/free-agent-image-input.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agent-image-input.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/free-agent-limits.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agent-model-proxy.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agent-model-proxy.ts",
+      "test": false,
+      "sites": 55
+    },
+    {
+      "file": "apps/server/src/free-agent-owned-model.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agent-prompt-budget.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agent-prompt-budget.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/free-agent-refresh.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agent-turn-budget.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agent-warning.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agent-warning.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/free-agents.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/free-agents.ts",
+      "test": false,
+      "sites": 46
+    },
+    {
+      "file": "apps/server/src/github-installation-store.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/github-installation.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/github-operations-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/github-operations-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/github-operations-4.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/github-operations-5.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/github-operations-6.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/github-operations-7.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/github-operations-begin-identity.ts",
+      "test": false,
+      "sites": 29
+    },
+    {
+      "file": "apps/server/src/github-operations-read-pr-checks-status.ts",
+      "test": false,
+      "sites": 25
+    },
+    {
+      "file": "apps/server/src/github-operations-reconcile-queued-corners.ts",
+      "test": false,
+      "sites": 27
+    },
+    {
+      "file": "apps/server/src/github-operations-refresh-check-rollup.ts",
+      "test": false,
+      "sites": 21
+    },
+    {
+      "file": "apps/server/src/github-operations-user-credential.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/github-operations.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/github-operations.ts",
+      "test": false,
+      "sites": 53
+    },
+    {
+      "file": "apps/server/src/github-star-prompt.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/github-star-prompt.ts",
+      "test": false,
+      "sites": 16
+    },
+    {
+      "file": "apps/server/src/github-webhook-order.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/google-workspace-journey.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/grant-policy-upgrade.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/grant-policy-upgrade.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/health-query-age.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/held-review-wake.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/helper-activation-schema.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/helper-activation-socket.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/helper-activation.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/helper-activation.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/helper-activation.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/helper-overlay.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/helper-overlay.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/helper-overlay.ts",
+      "test": false,
+      "sites": 27
+    },
+    {
+      "file": "apps/server/src/helper-usage-socket.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/helper-usage-source.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/helper-usage.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/helper-usage.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/helper-usage.ts",
+      "test": false,
+      "sites": 15
+    },
+    {
+      "file": "apps/server/src/helper-version-gate.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/helper-version-gate.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/history-outline-cache.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/identity-face.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/identity-handles.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/identity-live.e2e.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/incident-deadlocks.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/index.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/institutional-context-hybrid.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-corner-authority.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-curator.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-curator.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/institutional-history.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-history.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/institutional-memory-corner-requester.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-memory-embeddings.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-memory-embeddings.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/institutional-memory-lifecycle.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-memory-search-recall.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-memory-shadow-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-memory-shadow-save-institutional-memory.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/institutional-memory-shadow.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-memory-shadow.ts",
+      "test": false,
+      "sites": 20
+    },
+    {
+      "file": "apps/server/src/institutional-memory-turn-stats.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-skill-anchors.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-skill-anchors.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/institutional-skills.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/institutional-skills.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/integration/account-http.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/agents-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/agents.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/connectors-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/connectors.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/corner-briefs-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/corner-briefs.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/corner-turns-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/corner-turns-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/corner-turns.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/github-repositories-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/github-repositories.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/grants-approvals-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/grants-approvals-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/grants-approvals.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/history-reads-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/history-reads.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/membership-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/membership-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/membership.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/message-routing.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/messages-live.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/polls-choices.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/push.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/integration/subscriptions-events.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/invite-join-deadline.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/invite-preview.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/invite-socket.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/json-response.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/json-response.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/legacy-daemon-migration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/legacy-storage.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/link-agent-wallet.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/link-agent-wallet.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/live.presence-dedupe.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/live.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/luna-backfill.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/luna-backfill.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/machine-connection.ts",
+      "test": false,
+      "sites": 25
+    },
+    {
+      "file": "apps/server/src/machine-offline.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/machine-offline.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/machine-request-results.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/markdown-to-speech.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/markdown-to-speech.ts",
+      "test": false,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/mcp-registry-policy.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/mcp-registry-policy.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/mcp-registry.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/mcp-registry.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/mcp-webhook-delivery.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/measure-cli.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/media-object-routes.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/media-ttl.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/membership-authority-schema.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/membership-join.ts",
+      "test": false,
+      "sites": 23
+    },
+    {
+      "file": "apps/server/src/merge-archival.test.ts",
+      "test": true,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/message-columns.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/message-mentions.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/message-mentions.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/message-search-document-sql.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/migration-steps.test.ts",
+      "test": true,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/migration-steps.ts",
+      "test": false,
+      "sites": 33
+    },
+    {
+      "file": "apps/server/src/migrations/agent-corner-holds.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/migrations/archived-corner-wakes.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/migrations/completed-command-turns.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/migrations/connected-app-turns.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/migrations/corner-memberships.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/migrations/corner-merge-holds.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/migrations/corner-names.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/migrations/corner-names.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/migrations/legacy-storage.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/migrations/one-system-thread.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/migrations/owner-approved-grants.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/migrations/workflow-cleanup.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/mobile-minimum.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/mobile-minimum.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/model-catalog-notice.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/monolith-auth.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/monolith-auth.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/monolith-paint-budgets.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/needs-you.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/needs-you.ts",
+      "test": false,
+      "sites": 49
+    },
+    {
+      "file": "apps/server/src/network-router-rollout.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/next-day-checkin.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/notification-work.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/notification-work.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/object-projection.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/object-service.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/object-service.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/object-storage.retry.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/object-storage.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/object-storage.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/one-system-thread.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operation-outcomes.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operation-outcomes.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/operator-dashboard-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-dashboard-cohort.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-dashboard-core-metrics.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/operator-dashboard-downloads.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-dashboard-downloads.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/operator-dashboard-overview.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/operator-dashboard-periods.ts",
+      "test": false,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/operator-dashboard-services.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/operator-dashboard.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-dashboard.ts",
+      "test": false,
+      "sites": 46
+    },
+    {
+      "file": "apps/server/src/operator-finances-config.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-finances-contract.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-finances-details.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-finances-wire.ts",
+      "test": false,
+      "sites": 16
+    },
+    {
+      "file": "apps/server/src/operator-finances.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-finances.ts",
+      "test": false,
+      "sites": 37
+    },
+    {
+      "file": "apps/server/src/operator-system-dm-source.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/operator-system-dm.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/operator-system-dm.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/owed-mentions.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owed-tag-replies.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-attempt.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-attempt.ts",
+      "test": false,
+      "sites": 17
+    },
+    {
+      "file": "apps/server/src/owned-model-claim-socket.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-claim.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-credential.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-credential.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/owned-model-errors.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-invocation.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-parking.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/owned-model-parking.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-parking.ts",
+      "test": false,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/owned-model-stream.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/owned-model-stream.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/owned-model.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/owned-turn-reply.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/owner-schedule-clock.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/pending-attachment-source.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/permission-cards.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/permission-cards.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/phone-artifact-preview.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-identity.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-live-output.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-live-output.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/phone-media.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-media.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/phone-operation-names.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-operations.ts",
+      "test": false,
+      "sites": 75
+    },
+    {
+      "file": "apps/server/src/phone-read-limit.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-service.agent-connect.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-service.agent-profile.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-service.archived-corners.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-service.corner-projection.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-service.message-search.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-service.model-change-wake.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-service.read-room-latency.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-service.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/phone-socket.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-socket.read.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-socket.ts",
+      "test": false,
+      "sites": 14
+    },
+    {
+      "file": "apps/server/src/phone-viewing.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone-viewing.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/phone/access.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/phone/account-profile.ts",
+      "test": false,
+      "sites": 16
+    },
+    {
+      "file": "apps/server/src/phone/agent-configuration.ts",
+      "test": false,
+      "sites": 14
+    },
+    {
+      "file": "apps/server/src/phone/agent-reads.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/phone/agent-removal.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/phone/approvals.ts",
+      "test": false,
+      "sites": 19
+    },
+    {
+      "file": "apps/server/src/phone/chat-list.ts",
+      "test": false,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/phone/command-context.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/phone/connection-reads.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/phone/connections.ts",
+      "test": false,
+      "sites": 15
+    },
+    {
+      "file": "apps/server/src/phone/connector-offers.ts",
+      "test": false,
+      "sites": 16
+    },
+    {
+      "file": "apps/server/src/phone/context.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone/corner-reads.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/phone/execute.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/phone/history-search.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/phone/live-reads.ts",
+      "test": false,
+      "sites": 23
+    },
+    {
+      "file": "apps/server/src/phone/members-invites.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/phone/mention-notices.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/phone/message-decoration.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/phone/message-enrichment.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/phone/messages.ts",
+      "test": false,
+      "sites": 16
+    },
+    {
+      "file": "apps/server/src/phone/operation-names.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/phone/operations.ts",
+      "test": false,
+      "sites": 149
+    },
+    {
+      "file": "apps/server/src/phone/optional-enrichment.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/phone/pairing.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/phone/push-updates.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/phone/read-projection.ts",
+      "test": false,
+      "sites": 26
+    },
+    {
+      "file": "apps/server/src/phone/repositories.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/phone/room-actions.ts",
+      "test": false,
+      "sites": 23
+    },
+    {
+      "file": "apps/server/src/phone/room-read.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/phone/room-writes.ts",
+      "test": false,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/phone/roster.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/phone/schedules.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/phone/tray.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/phone/types.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/phone/values.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/phone/workbench-catalog.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/phone/workbench-reads.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/phone/workspace-writes.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/phone/workspaces.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/postgres-error.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/postgres-error.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/postgres-live-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/postgres-live-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/postgres-live-decode-payload.ts",
+      "test": false,
+      "sites": 45
+    },
+    {
+      "file": "apps/server/src/postgres-live-notifications.ts",
+      "test": false,
+      "sites": 20
+    },
+    {
+      "file": "apps/server/src/postgres-live-recovery.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/postgres-live-schema.ts",
+      "test": false,
+      "sites": 26
+    },
+    {
+      "file": "apps/server/src/postgres-live.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/postgres-live.ts",
+      "test": false,
+      "sites": 46
+    },
+    {
+      "file": "apps/server/src/pr-checks-status-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/pr-checks-status.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/procedure-tool-vocabulary.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/procedure-tool-vocabulary.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/production-corpus-hot-reads.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/production-corpus-performance.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/production-corpus-performance.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/production-corpus-width.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/production-deadlocks.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/production-latency.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/production-release-dispatch.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/production-release-dispatch.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/provider-webhooks.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/provider-webhooks.ts",
+      "test": false,
+      "sites": 33
+    },
+    {
+      "file": "apps/server/src/public-join-link.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/push-attention.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/push-claim-cleanup.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/push-dm-mute.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/push-follow.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/push-outbox.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/push-outbox.ts",
+      "test": false,
+      "sites": 20
+    },
+    {
+      "file": "apps/server/src/push-sensitivity.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/push-turn-context.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/query-profile.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/query-profile.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/read-cursor.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/read-cursor.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/read-surface-growth.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/registry-mcp-oauth.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/registry-mcp-oauth.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/registry-mcp.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/release-notify.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/release-notify.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/reply-steps.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/repository-link-success.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/repository-onboarding.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/repository-onboarding.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/repository-subscription-line.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/repository-subscription-line.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/resource-requester.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/retired-tools.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/review-access.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/review-access.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/review-evidence.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/review-proof-fixture.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/reviewer-approval-surface.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rollout-overlap.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/room-access-lock.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/room-choice.ts",
+      "test": false,
+      "sites": 19
+    },
+    {
+      "file": "apps/server/src/room-member-model.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/room-names.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/room-router-read.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/room-tool-projection.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/room-tool-projection.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-4.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-agent.ts",
+      "test": false,
+      "sites": 120
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-connections.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-consent-ui.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-consent-ui.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-endpoints.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-events.ts",
+      "test": false,
+      "sites": 22
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-logos.supported.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-logos.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-members.ts",
+      "test": false,
+      "sites": 28
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-negotiation.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-oauth-completion.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-oauth.ts",
+      "test": false,
+      "sites": 88
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-preregistered.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-schema.ts",
+      "test": false,
+      "sites": 67
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-stream.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-stream.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp-stream.ts",
+      "test": false,
+      "sites": 26
+    },
+    {
+      "file": "apps/server/src/rooms-mcp.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/rooms-mcp.ts",
+      "test": false,
+      "sites": 33
+    },
+    {
+      "file": "apps/server/src/router-authority-lock.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/router-command-coverage.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/router-command-dispatch.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/router-command-ledger.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/router-command.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/router-command.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/router-group-c-completion.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/router-group-c-oauth.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/router-schema-rollback.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/runnable-artifact.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/running-turn-continuity.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/schedule-title.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/schedule-title.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/scheduled-work-command.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/self-output-wake.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/sentry-expected-refusals.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/sentry-refusals.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/sentry-telegram.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/sentry-telegram.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/sentry-wake-source.ts",
+      "test": false,
+      "sites": 4
+    },
+    {
+      "file": "apps/server/src/sentry-wake.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/sentry-wake.ts",
+      "test": false,
+      "sites": 16
+    },
+    {
+      "file": "apps/server/src/sentry.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/sentry.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/server-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/server-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/server-authenticated-routes.ts",
+      "test": false,
+      "sites": 59
+    },
+    {
+      "file": "apps/server/src/server-configuration.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/server-create-beeline-server.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/server-lease-deadlines.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/server-live-connection.ts",
+      "test": false,
+      "sites": 75
+    },
+    {
+      "file": "apps/server/src/server-request-error-status.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/server-route.ts",
+      "test": false,
+      "sites": 90
+    },
+    {
+      "file": "apps/server/src/server.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/server.ts",
+      "test": false,
+      "sites": 28
+    },
+    {
+      "file": "apps/server/src/service-review.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/service-review.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/signin-attempts.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/signin-funnel.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/signin-funnel.ts",
+      "test": false,
+      "sites": 33
+    },
+    {
+      "file": "apps/server/src/site-download-taps.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/site-download-taps.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/slow-query-workload.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/solo-agent-routing.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/speech-transcription.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/speech-transcription.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/squire-machine.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/squire-machine.ts",
+      "test": false,
+      "sites": 17
+    },
+    {
+      "file": "apps/server/src/starter-banter.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/starter-banter.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/starter-invite.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/starter-onboarding-run.ts",
+      "test": false,
+      "sites": 8
+    },
+    {
+      "file": "apps/server/src/starter-onboarding.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/startup.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/startup.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/storage-registry.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/store-download-reports.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/subscription-webhooks.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/subscription-webhooks.ts",
+      "test": false,
+      "sites": 21
+    },
+    {
+      "file": "apps/server/src/system-line.producers.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/system-line.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/system-line.ts",
+      "test": false,
+      "sites": 28
+    },
+    {
+      "file": "apps/server/src/test-database-snapshot.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/concurrent-writers.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/corner-commands.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/helper-daemon.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/owned-model.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/preceding-owned-effect.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/squire-machines.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/test-support-monolith.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/test-support-phone-artifact-host.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/test-support-phone-read-host.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/test-support-router-group-b-postgres.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-fixtures/workflow-runs.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-agent-command.integration.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-app-connections.integration.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-background.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-commander-recovery.integration.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-commander.integration.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-computer-session.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-corner-lifecycle.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-corner-review-dispatch.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-database.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-feedback.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-github-operations.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-institutional-memory-shadow.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-operator-dashboard.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-postgres-live.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-pr-checks-status.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-rooms-mcp.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-server.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-voice-room-runtime.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-wallet.integration.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support-workbench.integration.test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/test-support.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/tray-approval-ask.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/tray-approval-ask.ts",
+      "test": false,
+      "sites": 13
+    },
+    {
+      "file": "apps/server/src/tray-decision-command.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/tray-decision-command.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/tray-decision-command.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/tray-projection.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/tray-release-migration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/turn-ownership-authority.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/turn-ownership-recovery.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/turn-ownership-socket.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/turn-ownership-terminal-receipt.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/turn-ownership.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/turn-ownership.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/turn-ownership.ts",
+      "test": false,
+      "sites": 21
+    },
+    {
+      "file": "apps/server/src/turn-replay.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/unfinished-app-sign-ins.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/unfinished-app-sign-ins.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/usage-account-read.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/vault-save-http.ts",
+      "test": false,
+      "sites": 9
+    },
+    {
+      "file": "apps/server/src/vault-save-relay.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/vault-save.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-budget.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/voice-budget.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-budget.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/voice-context.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-context.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/voice-conversation.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-eager-reply.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-eager-reply.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/voice-locks.postgres.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/voice-providers.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-providers.ts",
+      "test": false,
+      "sites": 32
+    },
+    {
+      "file": "apps/server/src/voice-reply.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-reply.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-request-assembler.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-request-assembler.ts",
+      "test": false,
+      "sites": 5
+    },
+    {
+      "file": "apps/server/src/voice-room-runtime-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-room-runtime-3.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-room-runtime-4.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-room-runtime-check-inactivity.ts",
+      "test": false,
+      "sites": 30
+    },
+    {
+      "file": "apps/server/src/voice-room-runtime-close.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/voice-room-runtime-refresh-speaking-speed.ts",
+      "test": false,
+      "sites": 17
+    },
+    {
+      "file": "apps/server/src/voice-room-runtime.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-room-runtime.ts",
+      "test": false,
+      "sites": 35
+    },
+    {
+      "file": "apps/server/src/voice-schema.ts",
+      "test": false,
+      "sites": 19
+    },
+    {
+      "file": "apps/server/src/voice-service.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-service.ts",
+      "test": false,
+      "sites": 27
+    },
+    {
+      "file": "apps/server/src/voice-speech-prefetch.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-speech-prefetch.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/voice-speedy-eager.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-target.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-target.ts",
+      "test": false,
+      "sites": 3
+    },
+    {
+      "file": "apps/server/src/voice-tempo.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/voice-tempo.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/wake-inbox.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/wallet-notices.ts",
+      "test": false,
+      "sites": 12
+    },
+    {
+      "file": "apps/server/src/wallet-post-ledger-line.ts",
+      "test": false,
+      "sites": 26
+    },
+    {
+      "file": "apps/server/src/wallet-venues.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/wallet-venues.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/wallet-webhooks.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/wallet-webhooks.ts",
+      "test": false,
+      "sites": 17
+    },
+    {
+      "file": "apps/server/src/wallet.integration-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/wallet.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/wallet.live.test.ts",
+      "test": true,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/wallet.ts",
+      "test": false,
+      "sites": 17
+    },
+    {
+      "file": "apps/server/src/web-push.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/web-push.ts",
+      "test": false,
+      "sites": 10
+    },
+    {
+      "file": "apps/server/src/welcome-retirement.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/welcome-retirement.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/welcome-video-workflow.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/welcome-video-workflow.ts",
+      "test": false,
+      "sites": 1
+    },
+    {
+      "file": "apps/server/src/work-authority-ownership.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workbench-companies.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workbench-companies.ts",
+      "test": false,
+      "sites": 52
+    },
+    {
+      "file": "apps/server/src/workbench.integration-2.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workbench.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workbench.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/workflow-admin.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-admin.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-permissions.integration.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-run-saved-status.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-run-views.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-run-views.ts",
+      "test": false,
+      "sites": 14
+    },
+    {
+      "file": "apps/server/src/workflow-runs-cancel-run-timers.ts",
+      "test": false,
+      "sites": 18
+    },
+    {
+      "file": "apps/server/src/workflow-runs-repeated-result.ts",
+      "test": false,
+      "sites": 20
+    },
+    {
+      "file": "apps/server/src/workflow-runs-start-workflow.ts",
+      "test": false,
+      "sites": 26
+    },
+    {
+      "file": "apps/server/src/workflow-runs.authority.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-runs.recovery.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-runs.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-runs.ts",
+      "test": false,
+      "sites": 11
+    },
+    {
+      "file": "apps/server/src/workflow-schedules.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-step-output.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workflow-transition.ts",
+      "test": false,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/workspace-creation.ts",
+      "test": false,
+      "sites": 2
+    },
+    {
+      "file": "apps/server/src/workspace-role-authority.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/x-ad-reports.ts",
+      "test": false,
+      "sites": 7
+    },
+    {
+      "file": "apps/server/src/x-ad-screen.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/x-ads.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/x-ads.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/src/x-site-visits.test.ts",
+      "test": true,
+      "sites": 0
+    },
+    {
+      "file": "apps/server/src/x-site-visits.ts",
+      "test": false,
+      "sites": 6
+    },
+    {
+      "file": "apps/server/vitest.config.ts",
+      "test": false,
+      "sites": 0
+    }
+  ]
+}

@@ -1,6 +1,19 @@
 import type { PGliteInterface } from '@electric-sql/pglite';
 import { describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
+import { migratedDatabase, PgliteDatabase } from './test-support.js';
+
+it('clones the provided schema without migrating again, including coverage runs', async () => {
+  const snapshot = vi.spyOn(PgliteDatabase.prototype, 'snapshot')
+    .mockRejectedValue(new Error('fixture schema must be prepared once in global setup'));
+  try {
+    const database = await migratedDatabase();
+    try {
+      expect((await database.query(`SELECT count(*)::integer AS count FROM agent_commands`)).rows)
+        .toEqual([{ count: 0 }]);
+      expect(snapshot).not.toHaveBeenCalled();
+    } finally { await database.close(); }
+  } finally { snapshot.mockRestore(); }
+});
 
 describe('PgliteDatabase teardown', () => {
   it('releases the engine even when a service or spy retains the wrapper', async () => {

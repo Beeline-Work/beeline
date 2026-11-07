@@ -85,21 +85,22 @@ export class PgliteDatabase implements SqlDatabase {
 }
 
 // A migrated schema, copied into each new test database. Vitest's global setup
-// migrates once per run (scripts/test-database-setup.ts); without it, or while
-// a coverage map is recorded, the first call in each file migrates, so the map
-// still sees every test run migrate().
+// migrates once per run (scripts/test-database-setup.ts). Coverage records for
+// consumers include the template's migration dependencies. Outside Vitest,
+// the first call migrates locally instead.
 let migratedSnapshot: Promise<Blob> | undefined;
 const sharedSnapshotKey = Symbol.for('beeline.server-test-database-snapshot');
 
 declare module 'vitest' {
   export interface ProvidedContext {
     serverTestDatabaseSnapshot?: string;
+    serverTestDatabaseSnapshotCoverage?: string;
   }
 }
 
 async function loadMigratedSnapshot(): Promise<Blob> {
   // Proof scripts also import this file outside Vitest.
-  const shared = process.env.VITEST && !process.env.SERVER_COVERAGE_MAP_DIR
+  const shared = process.env.VITEST
     ? (await import('vitest')).inject('serverTestDatabaseSnapshot') : undefined;
   if (shared) {
     // An immutable template can survive Vitest's per-file module resets.

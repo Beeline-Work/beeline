@@ -88,7 +88,11 @@ unchanged.
 
 The temporary migrated database template is an uncompressed tar image, shared
 immutably within each worker by its unique run path. Every test database still
-has its own PGlite filesystem and mutable state. Eight feature fixtures also
+has its own PGlite filesystem and mutable state. Coverage runs also build this
+template once in global setup, record its migration dependencies and inherit
+them into each `migratedDatabase()` consumer’s coverage record; they never
+rerun schema creation inside a test hook merely to collect those edges.
+`test-support.test.ts` guards template reuse in both modes. Eight feature fixtures also
 clone that schema instead of rerunning migrations before every case; explicit
 migration and backfill proofs still run their migrations. Object-service
 fixtures close each database after the test. The snapshot helper retains gzip

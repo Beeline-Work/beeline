@@ -1,17 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startBackgroundWork } from './background-work.js';
 import { OwnerScheduleClock } from './owner-schedule-clock.js';
+import { setImmediate, clearImmediate } from 'node:timers';
 
 afterEach(() => vi.useRealTimers());
 describe('event-only background work', () => {
   it('startup and elapsed time cannot wake an answered message again', async () => {
     vi.useFakeTimers();
     const answered = vi.fn(async () => {}), job = startBackgroundWork(answered);
-    await vi.advanceTimersByTimeAsync(86400_000);
+    vi.advanceTimersByTime(86400_000);
     expect(answered).not.toHaveBeenCalled();
     job.wake();
     await job.stop();
-    await vi.advanceTimersByTimeAsync(7 * 86400_000);
+    vi.advanceTimersByTime(7 * 86400_000);
     expect(answered).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -54,14 +55,14 @@ describe('event-only background work', () => {
     const run = vi.fn(async () => { throw new Error('unavailable'); }), job = startBackgroundWork(run);
     try {
       job.wake(); await job.stop();
-      await vi.advanceTimersByTimeAsync(86400_000);
+      vi.advanceTimersByTime(86400_000);
       expect(run).toHaveBeenCalledOnce(); expect(report).toHaveBeenCalledOnce();
       expect(vi.getTimerCount()).toBe(0);
     } finally { report.mockRestore(); }
   });
 });
 describe('owner-created schedule clock', () => {
-  it('shutdown clears its own handle and preserves another owner timer', async () => {
+  it('shutdown clears its own handle and preserves another owner timer', () => {
     const nativeSetTimeout = globalThis.setTimeout, nativeClearTimeout = globalThis.clearTimeout;
     vi.useFakeTimers();
     const fakeSetTimeout = globalThis.setTimeout, fakeClearTimeout = globalThis.clearTimeout;
@@ -78,7 +79,7 @@ describe('owner-created schedule clock', () => {
       clock.stop();
       expect(clear).toHaveBeenCalledWith(owned);
       expect(clear).not.toHaveBeenCalledWith(unrelated);
-      await vi.advanceTimersByTimeAsync(60_000);
+      vi.advanceTimersByTime(60_000);
       expect(outside).toHaveBeenCalledOnce();
       expect(fire).not.toHaveBeenCalled();
     } finally {
@@ -99,33 +100,38 @@ describe('owner-created schedule clock', () => {
     }
   });
 
-  it('fires only at the supplied time, once, and parks without another schedule', async () => {
+  it('fires only at the supplied time, once, and parks without another schedule', () => {
     vi.useFakeTimers();
     const fire = vi.fn(), clock = new OwnerScheduleClock(fire);
     clock.arm(60_000);
-    await vi.advanceTimersByTimeAsync(59_999); expect(fire).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1); expect(fire).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(86400_000); expect(fire).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(59_999); expect(fire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1); expect(fire).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(86400_000); expect(fire).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('preserves an owner time beyond the native timer range without firing early', async () => {
+  it('preserves an owner time beyond the native timer range without firing early', () => {
     vi.useFakeTimers();
     const fire = vi.fn(), clock = new OwnerScheduleClock(fire);
     const delay = 2_147_483_647 + 60_000;
     clock.arm(delay);
-    await vi.advanceTimersByTimeAsync(2_147_483_647);
+    vi.advanceTimersByTime(2_147_483_647);
     expect(fire).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(1);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(fire).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(0);
+    // Model an outstanding socket cleanup from an earlier file in this worker.
+    // Advancing this synchronous clock must not admit another owner's I/O.
+    const io = setImmediate(() => setTimeout(() => {}, 120_000));
+    try {
+      vi.advanceTimersByTime(60_000);
+      expect(fire).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { clearImmediate(io); }
   });
-  it('a schedule edit replaces the time and shutdown cancels it', async () => {
+  it('a schedule edit replaces the time and shutdown cancels it', () => {
     vi.useFakeTimers();
     const fire = vi.fn(), clock = new OwnerScheduleClock(fire);
     clock.arm(10_000); clock.arm(20_000);
-    await vi.advanceTimersByTimeAsync(10_000); expect(fire).not.toHaveBeenCalled();
-    clock.stop(); await vi.advanceTimersByTimeAsync(86400_000);
+    vi.advanceTimersByTime(10_000); expect(fire).not.toHaveBeenCalled();
+    clock.stop(); vi.advanceTimersByTime(86400_000);
     expect(fire).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
   });
 });

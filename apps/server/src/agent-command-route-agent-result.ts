@@ -179,7 +179,7 @@ export async function claimAgentCommand(
              SELECT member.removed_at FROM memberships member JOIN rooms room ON room.id=$2
              WHERE member.room_id=COALESCE(room.parent_id,room.id) AND member.identity_id=$3
              FOR UPDATE OF member
-           ), ${commandValidityCtes('$2', '$3', '$1', true, false)}, eligible AS MATERIALIZED (
+           ), ${commandValidityCtes('$2', '$3', true, false)}, eligible AS MATERIALIZED (
              SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
              WHERE (id=$1 OR ($7::boolean AND state='pending' AND action IN ('input','resume')))
                AND room_id=$2 AND agent_id=$3 AND

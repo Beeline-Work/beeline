@@ -574,7 +574,7 @@ it.each([
 });
 
 
-it('superseded review output cancels its command and turn through the terminal owner', async () => {
+it('superseded review output completes its running command and posts its reply', async () => {
   const corner = '44444444-4444-4444-8444-444444444444';
   await rootFixture.db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'stuck-turn-proof')`, [corner,W,R]);
   await insertCornerFacts(rootFixture.db, { cornerId: corner, ownerAgentId: A, lifecycle: '{"lifecycle":"working"}' });
@@ -590,15 +590,17 @@ it('superseded review output cancels its command and turn through the terminal o
   expect(await state()).toBe('review');
   await result(command!, '@hoots Review output for the old head');
   expect((await rootFixture.db.query(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows)
-    .toEqual([{state:'cancelled'}]);
+    .toEqual([{state:'complete'}]);
   expect((await rootFixture.db.query(`SELECT status,failure_reason FROM agent_turns
     WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`, [corner,command!.turnRequestId,A])).rows)
-    .toEqual([{status:'cancelled',failure_reason:'superseded_review'}]);
+    .toEqual([{status:'complete',failure_reason:null}]);
+  expect((await rootFixture.db.query(`SELECT text FROM messages WHERE room_id=$1 AND request_id=$2`,
+    [corner,command!.turnRequestId])).rows).toEqual([{text:'@hoots Review output for the old head'}]);
   expect(await state()).toBe('idle');
-  await expect(rootFixture.daemon.execute('postAgentTurnReceipt', {roomId:corner,requestId:command!.turnRequestId,
-    generationId:'g1',status:'complete'}, A, await helperOwner(A))).rejects.toThrow();
+  await rootFixture.daemon.execute('postAgentTurnReceipt', {roomId:corner,requestId:command!.turnRequestId,
+    generationId:'g1',status:'complete'}, A, await helperOwner(A));
   expect((await rootFixture.db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
-    [corner,command!.turnRequestId,A])).rows).toEqual([{status:'cancelled'}]);
+    [corner,command!.turnRequestId,A])).rows).toEqual([{status:'complete'}]);
 });
 
 

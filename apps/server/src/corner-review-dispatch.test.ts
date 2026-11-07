@@ -224,7 +224,7 @@ describe('corner message attribution', () => {
   });
 
 
-  it.each(['final', 'post'] as const)('Reproduction REVIEW-HEAD-1: a late old-head %s verdict cannot wake the worker', async surface => {
+  it.each(['final', 'post'] as const)('Reproduction REVIEW-HEAD-1: a late old-head %s posts without waking the worker', async surface => {
     await rootFixture.phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(81, '1'.repeat(40));
     const [review] = await commands(B, C);
@@ -234,7 +234,9 @@ describe('corner message attribution', () => {
     else await rootFixture.daemon.execute('postCornerMessage', { roomId: C, cornerId: C, requestId: review!.turnRequestId,
       generationId: 'g1', text: '@hoots FAIL: repair the old head.' }, B);
     expect(await commands(A, C)).toEqual([]);
-    expect((await rootFixture.db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%repair the old head%'`, [C])).rowCount).toBe(0);
+    expect((await rootFixture.db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%repair the old head%'`, [C])).rowCount).toBe(1);
+    expect((await rootFixture.db.query(`SELECT state FROM agent_commands WHERE id=$1`, [review!.id])).rows)
+      .toEqual([{state:surface === 'final' ? 'complete' : 'claimed'}]);
   });
 
 

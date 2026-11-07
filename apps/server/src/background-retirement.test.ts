@@ -1,7 +1,40 @@
 import { expect, it } from 'vitest';
 import { migrate } from './database.js';
-import { migratedDatabase } from './test-support.js';
+import { migratedDatabase, PgliteDatabase } from './test-support.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
+import { BACKGROUND_DUE_SOURCE_SCHEMA } from './background-due-source.js';
+
+it('retires the check-in command trigger even when its private table is already absent', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await db.query(`CREATE TABLE agent_commands(id text PRIMARY KEY,state text);
+      CREATE TABLE push_outbox(message_id text);
+      CREATE TABLE room_read_marks(message_id text);
+      INSERT INTO agent_commands VALUES('ordinary-owner-schedule','pending');
+      -- Former background-due-source.ts installed this branch on all commands.
+      -- PL/pgSQL does not track this SQL reference as a table dependency.
+      CREATE FUNCTION beeline_background_source() RETURNS trigger LANGUAGE plpgsql AS $$
+      DECLARE item jsonb:=to_jsonb(NEW); family text:=TG_ARGV[0];
+      BEGIN
+        IF family='next-day-checkin' AND TG_TABLE_NAME='agent_commands'
+          AND NOT EXISTS(SELECT 1 FROM next_day_checkins
+            WHERE command_id=item->>'id' AND measured_at IS NULL) THEN RETURN NULL; END IF;
+        RETURN NULL;
+      END $$;
+      CREATE TRIGGER beeline_background_source_2 AFTER INSERT OR UPDATE OR DELETE ON agent_commands
+        FOR EACH ROW EXECUTE FUNCTION beeline_background_source('next-day-checkin','state');`);
+    const claim = () => db.query(`UPDATE agent_commands SET state='claimed' WHERE id='ordinary-owner-schedule'`);
+    await expect(claim()).rejects.toThrow('relation "next_day_checkins" does not exist');
+    for (let pass = 0; pass < 2; pass++) {
+      await db.query(BACKGROUND_DUE_SOURCE_SCHEMA);
+      await expect(claim()).resolves.toMatchObject({ rowCount: 1 });
+      expect((await db.query(`SELECT state FROM agent_commands`)).rows).toEqual([{ state: 'claimed' }]);
+      expect((await db.query(`SELECT to_regclass('next_day_checkins') AS relation`)).rows).toEqual([{ relation: null }]);
+      expect((await db.query(`SELECT 1 FROM pg_trigger
+        WHERE tgrelid='agent_commands'::regclass AND NOT tgisinternal`)).rows).toEqual([]);
+    }
+  } finally { await db.close(); }
+});
 
 it('R-RELEASE-DDL: an upgrade preserves overlap storage and runs a real owner schedule', async () => {
   const db = await migratedDatabase();

@@ -258,6 +258,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
   release_checks:
     needs: initialize
+    # A called workflow may not request more than its caller grants; checks.yml
+    # declares packages: write for its on-demand image mirror job.
+    permissions:
+      contents: read
+      actions: read
+      packages: write
     uses: ./.github/workflows/checks.yml
     with:
       suite: all
